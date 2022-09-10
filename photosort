@@ -1,0 +1,187 @@
+#!/bin/bash
+clear
+### Check is exiftool is intalled, display message and exit if not found. ###
+hash exiftool 2>/dev/null || { echo >&2 "I require exiftool but it's not installed.  Aborting."; exit 1; }
+
+### Intro ###
+echo "Welcome to photosort"
+echo "Current file types supported: .HEIC .JPG .JPEG .PNG .MOV .MP4 .MPEG"
+echo
+
+### Ask for input & output directoies, set $input_dir & $output_dir. ###
+read -p "Input Directory (Current Dir): " input_dir
+input_dir=${input_dir:-"${PWD}"}
+read -p "Output Directory (Default ./sorted): " output_dir
+output_dir=${output_dir:-"${PWD}/sorted"}
+echo
+
+### Ask if want to move or copy files to the output directory. ###
+read -p "Move files? [y/N]" -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+  operation="mv"
+else
+  operation="cp"
+fi
+clear
+### Ask to verify input options ###
+echo "Please confirm options:"
+echo
+echo "Input directory is: ${input_dir}"
+echo "Output directory is: ${output_dir}"
+if [ "${operation}" == "cp" ]; then
+  echo "Files will be COPIED."
+elif [ "${operation}" == "mv" ]; then
+  echo "Files will be MOVED."
+fi
+echo
+read -p "Would you like to continue? [y/N]" -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]
+then
+    echo "Goodbye"
+    exit 1
+fi
+
+t=1 # set start counter varable for total files found
+c=1 # set start counter varable for file count
+
+
+### Start Time/Date stamp ###
+SECONDS=0 #Start elapsed timer
+clear
+start_date=`date +%Y-%m-%d`
+start_time=`date +%T`
+echo Started: "${start_date}" "$start_time"
+echo
+### Count total files found ###
+echo "Counting files..."
+for file in $(find -type f -iname "*.HEIC" -or -iname "*.JPG" -or -iname "*.JPEG" -or -iname "*.PNG" -or -iname "*.MOV" -or -iname "*.MP4" -or -iname "*.MPEG")
+do
+  file_total="$((t++))"
+done
+echo Total Files Found:"$file_total"
+
+### Search for files in $input_dir ###
+for file in $(find ${input_dir} -type f -iname "*.HEIC" -or -iname "*.JPG" -or -iname "*.JPEG" -or -iname "*.PNG" -or -iname "*.MOV" -or -iname "*.MP4" -or -iname "*.MPEG")
+do
+  file_name="${file##*/}" #sets $file_name with file name
+  file_ext="${file##*.}"   #sets $file_ext with file extention
+  file_count="$((c++))" #file counter
+  ### use esiftool to set ${date} to best found date in metadata, if no date found will create put in no_date directory. ###
+   meta_date=$(exiftool -m -b -DateTimeOriginal "${file}")
+  if [ -n "${meta_date}" ]; then
+    date="${meta_date}"
+    date_type="${date}"
+  else
+    meta_date=$(exiftool -m -b -CreateDate "${file}")
+      if [ -n "${meta_date}" ]; then
+        date="${meta_date}"
+        date_type="Date Time Original"
+      else
+        meta_date=$(exiftool -m -b -CreationDate "${file}")
+          if [ -n "${meta_date}" ]; then
+            date="${meta_date}"
+            date_type="Creation Date"
+          else
+            meta_date=$(exiftool -m -b -TrackCreateDate "${file}")
+              if [ -n "${meta_date}" ]; then
+                date="${meta_date}"
+                date_type="Track Create Date" 
+              else
+                meta_date=$(exiftool -m -b -MediaCreateDate "${file}")
+                  if [ -n "${meta_date}" ]; then
+                    date="${meta_date}"
+                    date_type="Media Create Date" 
+                  else
+                    date_type="None Found" 
+                    mkdir -p "${output_dir}/missing_metadata"
+                    "${operation}" "${file}" "${output_dir}"/missing_metadata/"${file_name}"
+                  fi
+              fi
+          fi
+      fi            
+  fi
+### use esiftool to set $name_end to sub second or duration in metadata, if none found will create put in no_sub-duraton directory. ###
+  sub_sec=$(exiftool -m -b -SubSecTimeOriginal "${file}")
+  if [ -n "${sub_sec}" ]; then
+    name_end="${sub_sec}"
+    name_end_type="Sub Sec Time Original"
+  else
+    meta_duration=$(exiftool -m -b -Duration "${file}")
+      if [ -n "${meta_duration}" ]; then
+        duration=${meta_duration%.*}
+        name_end="${duration}"
+        name_end_type="Duration"
+      else
+        mkdir -p "${output_dir}/missing_metadata"
+        "${operation}" "${file}" "${output_dir}"/missing_metadata/"${file_name}"
+        name_end_type="None Found"
+      fi  
+  fi
+
+### Move or copy files and remane, make needed directories ###
+if [ "${date_type}" != "None Found" ] || [ "${name_end_type}" != "None Found" ]; then
+  IFS=':: :: '
+  set $(echo "${date}") 
+  year=$1 month=$2 day=$3 hour=$4 minute=$5 second=$6
+  #months_array=(Null January February March April May June July August September October November December)
+  #month_name=${months_array[${month}]}
+  new_name="${year}"-"${month}"-"${day}"_"${hour}"-"${minute}"-"${second}"_"${name_end}"
+  month_dir="${year}"-"${month}"
+  day_dir="${year}"-"${month}"-"${day}"
+  mkdir -p "${output_dir}"
+  mkdir -p "${output_dir}"/"${year}"
+  mkdir -p "${output_dir}"/"${year}"/"${month_dir}"
+  mkdir -p "${output_dir}"/"${year}"/"${month_dir}"/"${day_dir}"
+  "${operation}" "$file" "${output_dir}"/"${year}"/"${month_dir}"/"${day_dir}"/"$new_name"."${file_ext}"
+  unset IFS
+fi
+
+
+
+echo | tee -a "${output_dir}"/log.txt
+echo File Number: "$file_count" of "$file_total" | tee -a "${output_dir}"/log.txt
+echo File found: "${file}" | tee -a "${output_dir}"/log.txt
+echo File Name: "$file_name" | tee -a "${output_dir}"/log.txt
+echo File Extention: "$file_ext" | tee -a "${output_dir}"/log.txt
+echo Date Type: "$date_type" | tee -a "${output_dir}"/log.txt
+echo Date: "$date_type" | tee -a "${output_dir}"/log.txt
+echo Name End Type: "$name_end_type" | tee -a "${output_dir}"/log.txt
+echo Name End: "$name_end" | tee -a "${output_dir}"/log.txt
+
+if [ "${operation}" == "cp" ]; then
+  echo "Operation: Copy" | tee -a "${output_dir}"/log.txt
+elif [ "${operation}" == "mv" ]; then
+  echo "Operation: Move" | tee -a "${output_dir}"/log.txt
+fi
+
+if [ "${date_type}" == "None Found" ] || [ "${name_end_type}" == "None Found" ]; then
+  echo New Name: "n/a" | tee -a "${output_dir}"/log.txt
+else
+  echo New Name: "$new_name.${file_ext}" | tee -a "${output_dir}"/log.txt
+fi
+
+if [ "${date_type}" == "None Found" ] || [ "${name_end_type}" == "None Found" ]; then
+  echo Directory: "${output_dir}/missing_metadata" | tee -a "${output_dir}"/log.txt
+else
+  echo Directory: "${output_dir}/${year}/${month_dir}/${day_dir}" | tee -a "${output_dir}"/log.txt
+fi
+echo  | tee -a "${output_dir}"/log.txt
+
+done 
+
+finish_date=`date +%Y-%m-%d`
+finish_time=`date +%T`
+elapsed_time="$SECONDS"
+
+echo
+echo All Finished!
+echo Started: "${start_date}" "$start_time" | tee -a "${output_dir}"/log.txt 
+echo Finished: "${finish_date}" "${finish_time}" | tee -a "${output_dir}"/log.txt 
+echo Total Files Found: "$file_total" | tee -a "${output_dir}"/log.txt
+echo Total Files Processed: "$file_count" | tee -a "${output_dir}"/log.txt
+echo "$(($elapsed_time / 3600)) hours, $((($elapsed_time / 60) % 60)) minutes and $(($elapsed_time % 60)) seconds elapsed." | tee -a "${output_dir}"/log.txt 
+echo
+echo Hope it worked.
+    
